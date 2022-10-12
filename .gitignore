@@ -1,2 +1,5 @@
 **/.terraform/**
 **/.terragrunt-cache/**
+*.zip
+tfplan
+*.tfplan

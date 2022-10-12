@@ -75,6 +75,7 @@ resource "aws_route53_record" "nginx_endpoint" {
 
 resource "aws_lb_listener_rule" "rule_1" {
   listener_arn = aws_lb_listener.listener.arn
+  priority     = 30
 
   action {
     type = "redirect"
@@ -96,6 +97,7 @@ resource "aws_lb_listener_rule" "rule_1" {
 
 resource "aws_lb_listener_rule" "rule_2" {
   listener_arn = aws_lb_listener.listener.arn
+  priority     = 20
 
   action {
     type = "fixed-response"
@@ -121,22 +123,23 @@ resource "aws_lb_listener_rule" "rule_2" {
 }
 
 resource "aws_lb_target_group" "tg" {
-  name = "my-targetgroup"
-  port = 80
+  name     = "my-targetgroup"
+  port     = 80
   protocol = "HTTP"
-  vpc_id = aws_default_vpc.default.id
+  vpc_id   = aws_default_vpc.default.id
 }
 
 resource "aws_lb_target_group_attachment" "attachment" {
   target_group_arn = aws_lb_target_group.tg.arn
-  target_id = data.aws_instance.instance.id
+  target_id        = data.aws_instance.instance.id
 }
 
 resource "aws_lb_listener_rule" "tg_rule" {
   listener_arn = aws_lb_listener.listener.arn
+  priority     = 40
 
   action {
-    type = "forward"
+    type             = "forward"
     target_group_arn = aws_lb_target_group.tg.arn
   }
 
@@ -148,10 +151,80 @@ resource "aws_lb_listener_rule" "tg_rule" {
 }
 
 resource "aws_security_group_rule" "lb_access" {
-  type = "ingress"
-  from_port = 80
-  to_port = 80
-  protocol = "tcp"
-  security_group_id = var.ec2_security_group_id
+  type                     = "ingress"
+  from_port                = 80
+  to_port                  = 80
+  protocol                 = "tcp"
+  security_group_id        = var.ec2_security_group_id
   source_security_group_id = aws_security_group.sg.id
+}
+
+resource "aws_lambda_function" "lambda" {
+  function_name    = "my-lambda-backend"
+  runtime          = "python3.9"
+  timeout          = 30
+  role             = aws_iam_role.lambda.arn
+  filename         = data.archive_file.lambda.output_path
+  handler          = "lambda.handler"
+  source_code_hash = data.archive_file.lambda.output_base64sha256
+}
+
+resource "aws_iam_role" "lambda" {
+  name        = "my-lambda-role"
+  description = "Role for lambda function called by load balancer"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_lb_target_group" "lambda" {
+  name        = "lambda-tg"
+  target_type = "lambda"
+}
+
+resource "aws_lb_target_group_attachment" "lambda" {
+  target_group_arn = aws_lb_target_group.lambda.arn
+  target_id        = aws_lambda_function.lambda.arn
+  depends_on = [
+    aws_lambda_permission.permission
+  ]
+}
+
+resource "aws_lambda_permission" "permission" {
+  statement_id  = "AllowExecutionFromALB"
+  principal     = "elasticloadbalancing.amazonaws.com"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.lambda.arn
+  source_arn    = aws_lb_target_group.lambda.arn
+}
+
+resource "aws_lb_listener_rule" "lambda" {
+  listener_arn = aws_lb_listener.listener.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.lambda.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/lambda"]
+    }
+  }
+
+  condition {
+    host_header {
+      values = ["myurl.pablosspot.ml"]
+    }
+  }
 }

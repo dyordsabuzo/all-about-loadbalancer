@@ -16,7 +16,13 @@ data "aws_route53_zone" "zone" {
 
 data "aws_instance" "instance" {
   filter {
-    name = "tag:Name"
+    name   = "tag:Name"
     values = ["ec2-reverse-proxy"]
   }
+}
+
+data "archive_file" "lambda" {
+  type        = "zip"
+  source_file = "${path.module}/lambda-scripts/lambda.py"
+  output_path = "lambda.zip"
 }
