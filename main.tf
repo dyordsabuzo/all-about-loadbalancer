@@ -28,6 +28,22 @@ resource "aws_lb_listener" "listener" {
   }
 }
 
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.lb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+
+    redirect {
+      port        = 443
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
 resource "aws_security_group" "sg" {
   name        = "my-loadbalancer-sg"
   description = "My load balancer sec group"
@@ -42,6 +58,13 @@ resource "aws_security_group" "sg" {
   ingress {
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -139,6 +162,23 @@ resource "aws_lb_listener_rule" "tg_rule" {
   priority     = 40
 
   action {
+    type = "authenticate-oidc"
+
+    authenticate_oidc {
+      authorization_endpoint     = "${local.okta_url}/oauth2/v1/authorize"
+      token_endpoint             = "${local.okta_url}/oauth2/v1/token"
+      user_info_endpoint         = "${local.okta_url}/oauth2/v1/userinfo"
+      issuer                     = local.okta_url
+      session_cookie_name        = "TOKEN-My-OIDC"
+      session_timeout            = 120
+      scope                      = "openid profile"
+      on_unauthenticated_request = "authenticate"
+      client_id                  = okta_app_oauth.oidc.client_id
+      client_secret              = okta_app_oauth.oidc.client_secret
+    }
+  }
+
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.tg.arn
   }
@@ -227,4 +267,18 @@ resource "aws_lb_listener_rule" "lambda" {
       values = ["myurl.pablosspot.ml"]
     }
   }
+}
+
+resource "okta_app_oauth" "oidc" {
+  label          = "My OIDC"
+  type           = "web"
+  grant_types    = ["authorization_code"]
+  response_types = ["code"]
+  omit_secret    = false
+  redirect_uris  = ["https://nginx.pablosspot.ml/oauth2/idpresponse"]
+}
+
+resource "okta_app_group_assignment" "assignment" {
+  app_id   = okta_app_oauth.oidc.id
+  group_id = data.okta_group.group.id
 }
